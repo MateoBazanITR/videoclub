@@ -1,15 +1,7 @@
-# MODULO SOCIOS
-# Administra los socios desde el panel del dueño:
-# - Listar todos los socios con sus alquileres activos
-# - Eliminar un socio (borra alquileres y actualiza avaladores)
-
 import flet as ft
 from conexion import con, cur
 from utilidades import snackbar, volver_dueno
 
-# Muestra todos los socios con sus peliculas alquiladas actualmente
-# SQL: JOIN socio con alquiler (solo los activos, fecha_devolucion IS NULL),
-# ejemplar y pelicula para mostrar el titulo y numero de ejemplar alquilado.
 def mostrar_socios(page):
     page.clean()
     cur.execute("""SELECT s.dni, s.nombre, p.titulo, e.numero_ejemplar
@@ -19,12 +11,11 @@ def mostrar_socios(page):
         LEFT JOIN pelicula p ON e.id_pelicula = p.id_pelicula
         ORDER BY s.nombre, p.titulo""")
     datos = cur.fetchall()
-    # Se agrupan las peliculas alquiladas por cada socio usando un diccionario
     socios = {}
     for d in datos:
         if d[0] not in socios:
             socios[d[0]] = {"nombre": d[1], "pelis": []}
-        if d[2]:  # Si tiene una pelicula (LEFT JOIN puede dar NULL)
+        if d[2]:
             socios[d[0]]["pelis"].append(f"{d[2]} (Ej. N°{d[3]})")
     if not socios:
         page.add(ft.Column([ft.Text("No hay socios"), ft.ElevatedButton("Volver", on_click=lambda e: volver_dueno(page))]))
@@ -41,15 +32,10 @@ def mostrar_socios(page):
         lv.controls.append(ft.Column(c))
     page.add(ft.Column([ft.Text("SOCIOS"), lv, ft.ElevatedButton("Volver", on_click=lambda e: volver_dueno(page))]))
 
-# Pantalla de confirmacion antes de eliminar un socio
 def _confirmar(page, dni):
     page.clean()
     page.add(ft.Column([ft.Text("¿Eliminar socio?"), ft.Text("Se eliminarán también sus alquileres."), ft.ElevatedButton("Sí, eliminar", on_click=lambda e: _eliminar(page, dni)), ft.ElevatedButton("No", on_click=lambda e: mostrar_socios(page))]))
 
-# Ejecuta la eliminacion del socio en 3 pasos:
-# 1. Actualiza los socios que tenian a este como avalador (aviso: NULL)
-# 2. Borra todos los alquileres del socio
-# 3. Borra el socio
 def _eliminar(page, dni):
     try:
         cur.execute("UPDATE socio SET avalador_dni = NULL WHERE avalador_dni = %s", (dni,))

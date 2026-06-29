@@ -1,47 +1,31 @@
-# MODULO ALQUILERES
-# Maneja todo el ciclo de alquiler:
-# - Alquilar: registra socio (si es nuevo con avalador) -> selecciona pelicula -> selecciona ejemplar -> confirma
-# - Mis Alquileres: consulta los alquileres activos de un socio
-# - Devolver: busca los alquileres activos de un socio y permite devolverlos
-
 import flet as ft
 from conexion import con, cur
 from utilidades import snackbar, volver_dueno, volver_cliente
 
-# ═══════════════════════════════════════════════
-# ALQUILAR (flujo completo: 4 pantallas)
-# ═══════════════════════════════════════════════
-
-# Pantalla 1: formulario de datos del socio
 def mostrar_alquilar(page):
     page.clean()
     t_dni = ft.TextField(label="DNI")
     t_nom = ft.TextField(label="Nombre")
     t_aval = ft.TextField(label="Avalador (nuevo socio)")
-    page.dni_socio = None  # Guarda el DNI en la pagina para usarlo en las siguientes pantallas
+    page.dni_socio = None
     page.add(ft.Column([ft.Text("ALQUILAR PELICULA"), ft.Text("Ingrese sus datos:"), t_dni, t_nom, t_aval, ft.ElevatedButton("Continuar", on_click=lambda e: _continuar(e, page, t_dni, t_nom, t_aval)), ft.ElevatedButton("Volver", on_click=lambda e: volver_cliente(page))]))
 
-# Valida los datos y registra al socio si es nuevo (requiere avalador)
-# SQL: busca el socio por DNI; si no existe, verifica el avalador y lo crea
 def _continuar(e, page, t_dni, t_nom, t_aval):
     dni, nombre = t_dni.value.strip(), t_nom.value.strip()
     if not dni or not nombre:
         snackbar(page, "DNI y nombre obligatorios"); return
     cur.execute("SELECT nombre FROM socio WHERE dni = %s", (dni,))
-    if not cur.fetchone():  # Socio no existe, hay que registrarlo
+    if not cur.fetchone():
         aval = t_aval.value.strip()
         if not aval: snackbar(page, "Avalador requerido para nuevo socio"); return
         if aval == dni: snackbar(page, "Mismo DNI"); return
         cur.execute("SELECT COUNT(*) FROM socio WHERE dni = %s", (aval,))
         if cur.fetchone()[0] == 0: snackbar(page, "Avalador no existe"); return
-        # SQL: inserta el nuevo socio con el avalador
         cur.execute("INSERT INTO socio (dni, nombre, avalador_dni) VALUES (%s, %s, %s)", (dni, nombre, aval))
         con.commit()
-    page.dni_socio = dni  # Guarda el DNI para las siguientes pantallas
-    _mostrar_disponibles(page)  # Pasa a la pantalla 2
+    page.dni_socio = dni
+    _mostrar_disponibles(page)
 
-# Pantalla 2: muestra las peliculas con ejemplares disponibles
-# SQL: selecciona peliculas con al menos 1 ejemplar "Disponible" (subconsulta en HAVING)
 def _mostrar_disponibles(page):
     page.clean()
     lv = ft.ListView()
@@ -56,8 +40,6 @@ def _mostrar_disponibles(page):
         page.dni_socio = None; return
     page.add(ft.Column([ft.Text("SELECCIONE PELICULA"), lv, ft.ElevatedButton("Volver", on_click=lambda e: volver_cliente(page))]))
 
-# Pantalla 3: muestra los ejemplares disponibles de la pelicula seleccionada
-# SQL: busca ejemplares donde id_pelicula = X AND estado = 'Disponible'
 def _seleccionar_ejemplar(page, id_peli, titulo):
     page.clean()
     lv = ft.ListView()
@@ -68,19 +50,13 @@ def _seleccionar_ejemplar(page, id_peli, titulo):
         snackbar(page, "Ya no hay ejemplares disponibles"); _mostrar_disponibles(page); return
     page.add(ft.Column([ft.Text(f"ALQUILAR: {titulo}"), lv, ft.ElevatedButton("Volver", on_click=lambda e: _mostrar_disponibles(page))]))
 
-# Pantalla 4: confirma el alquiler y lo guarda en la base de datos
-# Verifica: que no supere los 4 alquileres activos permitidos
-# SQL: INSERT en alquiler + UPDATE estado del ejemplar a 'Alquilado'
 def _confirmar_alquiler(page, id_ej, num, titulo):
     dni = page.dni_socio
     if not dni: snackbar(page, "Error"); volver_cliente(page); return
     try:
-        # Cuenta los alquileres activos del socio (fecha_devolucion IS NULL)
         cur.execute("SELECT COUNT(*) FROM alquiler WHERE dni_socio = %s AND fecha_devolucion IS NULL", (dni,))
         if cur.fetchone()[0] >= 4: snackbar(page, "Máximo 4 alquileres activos"); return
-        # SQL: inserta el alquiler con fecha actual (CURDATE()) y sin fecha_devolucion
         cur.execute("INSERT INTO alquiler (fecha_inicio, dni_socio, id_ejemplar) VALUES (CURDATE(), %s, %s)", (dni, id_ej))
-        # SQL: marca el ejemplar como alquilado
         cur.execute("UPDATE ejemplar SET estado = 'Alquilado' WHERE id_ejemplar = %s", (id_ej,))
         con.commit()
         snackbar(page, f"Alquiler exitoso: {titulo} (Ej. N°{num})")
@@ -88,12 +64,6 @@ def _confirmar_alquiler(page, id_ej, num, titulo):
     except Exception as ex:
         con.rollback(); snackbar(page, f"Error: {ex}")
 
-# ═══════════════════════════════════════════════
-# MIS ALQUILERES (cliente)
-# ═══════════════════════════════════════════════
-
-# Muestra los alquileres activos de un socio (sin opcion a devolver)
-# SQL: JOIN alquiler-ejemplar-pelicula, solo alquileres sin devolver
 def _consultar_mis_alquileres(e, page, t_dni):
     dni = t_dni.value.strip()
     if not dni: snackbar(page, "Debe ingresar un DNI"); return
@@ -114,12 +84,6 @@ def mostrar_mis_alquileres(page):
     t_dni = ft.TextField(label="DNI")
     page.add(ft.Column([ft.Text("MIS ALQUILERES"), t_dni, ft.ElevatedButton("Consultar", on_click=lambda e: _consultar_mis_alquileres(e, page, t_dni)), ft.ElevatedButton("Volver", on_click=lambda e: volver_cliente(page))]))
 
-# ═══════════════════════════════════════════════
-# DEVOLVER (dueño)
-# ═══════════════════════════════════════════════
-
-# Busca los alquileres activos de un socio y permite devolverlos
-# SQL: igual que mis_alquileres pero ademas trae id_alquiler e id_ejemplar para el UPDATE
 def _buscar_devolver(e, page, t_dni):
     dni = t_dni.value.strip()
     if not dni: snackbar(page, "Debe ingresar un DNI"); return
@@ -135,8 +99,6 @@ def _buscar_devolver(e, page, t_dni):
         page.add(ft.Column([ft.Text(f"{socio[0]} no tiene alquileres activos."), ft.ElevatedButton("Volver", on_click=lambda e: volver_dueno(page))])); return
     page.add(ft.Column([ft.Text(f"DEVOLVER ({socio[0]})"), lv, ft.ElevatedButton("Volver", on_click=lambda e: volver_dueno(page))]))
 
-# Procesa la devolucion: actualiza fecha_devolucion y cambia el estado del ejemplar
-# SQL: UPDATE alquiler SET fecha_devolucion = CURDATE() + UPDATE ejemplar SET estado = 'Disponible'
 def _procesar_devolver(id_alq, id_ej, titulo, num_ej, page):
     try:
         cur.execute("UPDATE alquiler SET fecha_devolucion = CURDATE() WHERE id_alquiler = %s", (id_alq,))
